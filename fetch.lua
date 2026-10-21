@@ -1,6 +1,10 @@
 --- ffetch (All right reserved), that dummy package manager.
 --- ffetch is free and open-source
 
+local todo = function (...)
+  print('[TODO]', ...)
+end
+
 ---(extension) Returns a list of string where each elements is a line.
 ---@param self string
 ---@return string[]
@@ -199,34 +203,25 @@ local sys = {}
 ffetch.sys = sys
 
 ---Checks wether you're on a UNIX System or a MS-DOS-like system.
----@return boolean
-sys.isunix = function ()
-  return package.cpath:find('\\') == nil
-end
+sys.isunix =  package.cpath:find('\\') == nil
+
 
 ---Returns true when you're running this code on a Windows computer.
----@return boolean
-sys.iswindows = function ()
-  return package.cpath:find('\\') ~= nil
-end
+sys.iswindows = package.cpath:find('\\') ~= nil
 
 ---Returns true when you're on macOS.
----@return boolean
-sys.ismacos = function ()
-  if not sys.isunix() then return false end
+sys.ismacos = (function ()
+  if not sys.isunix then return false end
   local p = io.popen("uname -s 2>/dev/null", "r")
   if not p then return false end
 
   local result = p:read("*l")
   p:close()
   return result == "Darwin"
-end
+end)()
 
 ---Returns true when you're on Linux.
----@return boolean
-sys.islinux = function ()
-  return not (sys.ismacos() or sys.iswindows())
-end
+sys.islinux = not (sys.ismacos or sys.iswindows)
 
 ---Launches a process with Lua's io.popen function.
 ---@param prun string Program to run.
@@ -261,6 +256,14 @@ sys.launch = function (prun, ...)
   }
 end
 
+---@param file string
+---@param env table?
+---@return boolean, ...
+sys.dofile = function (file, env)
+  local fun = assert(loadfile(file, "bt", env))
+  return pcall(fun)
+end
+
 ---@generic T
 ---@alias proghandler fun(suc: boolean, 
 ---exitcode:'exit'|'signal'|'unknown', 
@@ -272,14 +275,14 @@ sys.fs = {}
 ---@return boolean success
 sys.fs.mkdir = function (...)
   local p = 'mkdir'
-  if sys.isunix() then p = 'mkdir -p' end
+  if sys.isunix then p = 'mkdir -p' end
   return sys.launch(p, ...).suc
 end
 
 ---Returns what I use as home directory.
 ---@return string path
 sys.fs.usrhome = function ()
-  if sys.isunix() then
+  if sys.isunix then
     return (os.getenv('HOME') or './')
   else
     return (os.getenv('USERPROFILE') or './')
@@ -290,7 +293,7 @@ end
 ---@return string path
 sys.fs.home = function ()
   local p
-  if sys.isunix() then
+  if sys.isunix then
     p = (os.getenv('HOME') or './') .. '/.ffetch/'
   else
     p = (os.getenv('USERPROFILE') or './') .. '/.ffetch/'
@@ -318,7 +321,7 @@ end
 ---Removes the given elements.
 ---@param ... string Elements to remove
 sys.fs.rm = function (...)
-  if sys.isunix() then
+  if sys.isunix then
     sys.launch('rm', '-rf', ...)
   else
     sys.launch('rmdir', ...)
@@ -329,7 +332,7 @@ end
 ---@param dir string The directory in which the blob is made.
 ---@return string[]
 sys.fs.entries = function (dir)
-  if sys.isunix() then
+  if sys.isunix then
     return sys.launch('ls', dir).stdout:lines()
   else
     return sys.launch('dir', '/b', dir).stdout:lines()
@@ -340,7 +343,7 @@ end
 ---@param dir string The directory in which the blob is made.
 ---@return string[]
 sys.fs.files = function (dir)
-  if sys.isunix() then
+  if sys.isunix then
     return sys.launch(('ls -p %s | grep -v "/$"'):format(dir)).stdout:lines()
   else
     return sys.launch('dir', '/b', '/a-d', dir).stdout:lines()
@@ -351,10 +354,22 @@ end
 ---@param dir string The directory in which the blob is made.
 ---@return string[]
 sys.fs.folders = function (dir)
-  if sys.isunix() then
+  if sys.isunix then
     return sys.launch(('ls -d */ %s'):format(dir)).stdout:lines()
   else
     return sys.launch('dir', '/b', '/ad', dir).stdout:lines()
+  end
+end
+
+---Copies files / folders to somewhere idk
+---@param src string
+---@param dst string
+---@return { suc: boolean, exitcode: 'exit'|'signal'|'unknown', code: integer, stdout: string }
+sys.fs.copy = function (src, dst, ...)
+  if sys.islinux then
+    return sys.launch('cp', '-r', src, dst)
+  else
+    return sys.launch('xcopy', src, dst, '/s', '/e')
   end
 end
 
@@ -438,6 +453,23 @@ git.switch = function (branch, pwd,  ...)
   return ret.suc, ret.stdout, ret.code, ret.exitcode
 end
 
+ffetch.net = {}
+local net = ffetch.net
+
+---Downloads a file (using curl)
+---@param url string
+---@param err fun(code: integer, url: string, stdout: string)?
+---@return boolean success, string output
+net.get = function (url, err)
+  local v = sys.launch('curl', '-sS', url)
+  if not v.suc then
+    if type(err) == "function" then err(v.code, url, v.stdout) end
+    return v.suc, ''
+  end
+
+  return v.suc, v.stdout
+end
+
 ffetch.pkg = {}
 local pkg = ffetch.pkg
 
@@ -513,12 +545,22 @@ end
 pkg.download = function (modname, modpath, print)
   ---@todo version?
   print = print or _G.print
-  if not git.switch(modname, modpath) then
-    print('failed to switch on the correct branch!')
-    return false
-  end
+  assert(git.switch(modname, modpath), 'failed to switch on the correct branch!')
 
-  -- idk
+  local ok, cfg = sys.dofile(modpath .. '/fetch.lua', _ENV)
+  assert(ok, ("cannot download mod '%s': function threw an error! (%s)"):format(modname, tostring(cfg)))
+  local fun = cfg.install
+
+  local libs = {
+    fs = sys.fs,
+    git = git,
+  }
+
+  if type(fun) == "function" then
+    xpcall(fun, function (...)
+      print(("unable to install '%s': "):format(modname), ...)
+    end, libs)
+  end
 
   return true
 end
@@ -529,6 +571,9 @@ end
 ---@param print fun(...)?
 pkg.install = function (modname, servers, print)
   print = print or _G.print
+  local server = pkg.search(modname, servers, print)
+  assert(server, ("cannot install '%s': mod not found!"):format(modname))
+  pkg.download(modname, server, print)
 end
 
 ---@param repo string
@@ -567,6 +612,16 @@ pkg.fetch = function (rel, print)
   end
 end
 
-pkg.fetch()
+ffetch.cli = {}
+local cli = ffetch.cli
+
+---@param name string
+---@param repo string
+cli.add = function (name, repo)
+  pkg.add(name, repo)
+end
+
+todo("--list?")
+todo("pkg.install.INSTALLFILE")
 
 return ffetch
