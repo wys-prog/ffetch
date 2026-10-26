@@ -1,5 +1,7 @@
---- ffetch (All right reserved), that dummy package manager.
---- ffetch is free and open-source
+--- ffetch
+--- A free and open source project.
+--- Users shall know what they are doing with this code, and ffetch's developpers do not
+--- provide ANY WARRANTY to anything that happens to users.
 
 local sys = {}
 
@@ -146,6 +148,26 @@ sys.hasdir = function(p)
   return suc or false
 end
 
+---@param p string
+sys.mkdir = function (p)
+  popen('mkdir', sys.isunix and '-p', p):close()
+end
+
+---@param p string
+---@return boolean
+sys.hasfile = function (p)
+  local f = io.open(p, "r")
+  return f ~= nil
+end
+
+---@param p string
+sys.createfile = function (p)
+  local f = io.open(p, "w")
+  if f then
+    f:close()
+  end
+end
+
 ---@param name string
 ---@return string? path, string? errmsg
 local find = function(name)
@@ -219,8 +241,16 @@ url.isvalid = function(url)
   return code >= 200 and code < 400
 end
 
-local sfmt = {}
+local path = {}
 
+---@param p string
+---@return string
+path.normalize = function (p)
+  local s = p:gsub('/+', '/')
+  return s
+end
+
+local sfmt = {}
 
 ---@class sfmt.progress
 ---@field name string? The name associated with this progress entry, supplied by the caller (e.g. repository name).
@@ -265,7 +295,6 @@ sfmt.parseprogresse = function(name, line)
   }
 end
 
-
 ---@param len integer
 ---@param percentage number
 ---@return string
@@ -304,11 +333,15 @@ end
 
 ---@return string[]
 pkg.servers = function()
-  local home = sys.home()
-  local fun = assert(loadfile(home .. '/config.lua', "bt", {}))
+  local home = path.normalize(sys.home() .. '/config.lua')
+  if not sys.hasfile(home) then
+    sys.createfile(home)
+  end
+
+  local fun = assert(loadfile(home, "bt", {}))
   local ret = fun()
   if type(ret) ~= "table" then
-    error("ill-formed configuration file! (Should return a table)")
+    error(("ill-formed configuration file! (Should return a table): %s"):format(home))
   end
 
   local list = {}
@@ -401,9 +434,32 @@ pkg.install = function(...)
   end
 end
 
+---@param p string
+local check = function (p)
+  io.write(("checking for dependency '%s': "):format(p)):flush()
+  local found = find(p)
+  if found then
+    io.write(("%sfound%s at '%s'\n"):format(ANSI.green, ANSI.reset, found))
+  else
+    io.write(("%snot found%s\n"):format(ANSI.red, ANSI.reset))
+    error('a required dependency was not found!')
+  end
+end
+
+pkg.init = function ()
+  if not sys.hasdir(sys.home()) then
+    io.write('It seems like this is your first time launching ffetch.\n')
+    io.write('Creating home directory'):flush()
+    sys.mkdir(sys.home())
+  end
+
+  check('git')
+  check('curl')
+end
+
+pkg.init()
 pkg.install('godot', 'godot-cpp')
 
----@TODO: SIZE INFO!!
 ---@TODO: pkg.config ++update
 return {
   pkg = pkg,
