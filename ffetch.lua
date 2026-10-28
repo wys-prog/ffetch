@@ -331,6 +331,10 @@ local files = {
   packages = 'packages.txt',
 }
 
+for key, value in pairs(files) do
+  files[key] = sys.home() .. '/' .. value
+end
+
 ---@param name string
 ---@param servers string[]
 ---@return string[]
@@ -447,14 +451,17 @@ end
 
 ---@param ... string
 pkg.install = function(...)
+  local packages = assert(io.open(files.packages, 'a+'))
   for _, name in ipairs({...}) do
     local installed, path = pkg.isinstalled(name)
     if installed then
       io.write(ANSI.yellow, ("package '%s' already installed at "):format(name), ANSI.underline_yellow, path, ANSI.reset, '\n')
     else
       pkg.installone(name)
+      packages:write(sys.home() .. '/installed/' .. name, '\n')
     end
   end
+  packages:close()
 end
 
 ---@param p string
@@ -492,6 +499,21 @@ pkg.init = function ()
   check('make')
   check('cmake')
   check(os.getenv('EDITOR') or 'micro')
+end
+
+---@todo: fetch on SPECIFIC repos?
+pkg.fetch = function ()
+  local config, errmsg = io.open(files.packages, 'r+')
+  assert(config, 'cannot open packages file! ' .. (errmsg or  ''))
+  for line in config:lines() do
+    io.write('fetching ', line, ': '):flush()
+    local ok = popen('git', '-C', line, 'fetch'):close()
+    if not ok then
+      io.write(ANSI.red, 'failed\n', ANSI.reset):flush()
+    else
+      io.write(ANSI.green, 'ok', ANSI.reset, '\n')
+    end
+  end
 end
 
 pkg.help = function ()
