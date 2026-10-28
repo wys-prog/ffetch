@@ -23,6 +23,23 @@ table.rmif = function(self, pred)
   end
 end
 
+---@generic T
+---@param self T[]
+---@param from integer?
+---@param till integer?
+---@return T[]
+table.take = function (self, from, till)
+  local arr = {}
+  from = from or 1
+  till = till or #self
+
+  for i = from, till, 1 do
+    arr[#arr+1] = self[i]
+  end
+
+  return arr
+end
+
 sys.iswindows = package.config:sub(1, 1) == "\\"
 sys.isunix = not sys.iswindows
 
@@ -309,6 +326,11 @@ sfmt.progressbar = function(len, percentage)
   return bar
 end
 
+local files = {
+  config = 'config.lua',
+  packages = 'packages.txt',
+}
+
 ---@param name string
 ---@param servers string[]
 ---@return string[]
@@ -363,7 +385,7 @@ pkg.unpack = function(name, link)
 
   local handle = popen(pkg.git, 'clone', '--verbose', '--progress', link, indir)
   assert(handle, ("cannot clone %s (Git pipe not created!)"):format(name))
-  handle:setvbuf("full", 256)
+  handle:setvbuf("no", 256)
 
   local line = handle:read(256)
   while line do
@@ -380,10 +402,11 @@ pkg.unpack = function(name, link)
         value.speedunit or "B",
         (value.total or 0) - (value.objleft or 0),
         value.total or 0
-      ), (' '):rep(80), '\r'):flush()
+      ), '\r'):flush()
     end
   end
-  io.write((' '):rep(80), '\r'):flush()
+
+  io.write('\27[2K', ANSI.cyan, name, ': ', ANSI.green, 'done', ANSI.reset, '\n'):flush()
 
   local suc, kind, code = handle:close()
   assert(suc, ("Git failed to install '%s' (%s: %d)"):format(name, kind, code))
@@ -396,7 +419,7 @@ pkg.installone = function(name, conflicts)
   local i = 1
 
   if #researches < 1 then
-    error(('%s: not found!'):format(name))
+    pcall(error, ('%s: not found!'):format(name))
   elseif #researches > 1 then
     if conflicts then
       i = conflicts(name, researches)
@@ -435,14 +458,17 @@ pkg.install = function(...)
 end
 
 ---@param p string
-local check = function (p)
+---@param strict boolean?
+local check = function (p, strict)
   io.write(("checking for dependency '%s': "):format(p)):flush()
   local found = find(p)
   if found then
     io.write(("%sfound%s at '%s'\n"):format(ANSI.green, ANSI.reset, found))
   else
     io.write(("%snot found%s\n"):format(ANSI.red, ANSI.reset))
-    error('a required dependency was not found!')
+    if strict then 
+      error('a required dependency was not found!')
+    end
   end
 end
 
@@ -451,14 +477,42 @@ pkg.init = function ()
     io.write('It seems like this is your first time launching ffetch.\n')
     io.write('Creating home directory'):flush()
     sys.mkdir(sys.home())
+    local config = io.open(sys.home() .. '/config.lua', "w")
+    if config then
+      config:write("-- auto-generated configuration file. You may modify its content manually, or through the CLI.\nreturn {\n\tservers = {}\n}")
+      config:close()
+    end
   end
 
-  check('git')
-  check('curl')
+  check('git', true)
+  check('curl', true)
+  check('gcc')
+  check('g++')
+  check('lua')
+  check('make')
+  check('cmake')
+  check(os.getenv('EDITOR') or 'micro')
 end
 
-pkg.init()
-pkg.install('godot', 'godot-cpp')
+pkg.help = function ()
+  for key, value in pairs(pkg) do
+    if type(value) == "function" then
+      io.write(ANSI.blue, key, '\t', ANSI.green, tostring(value), ANSI.reset, '\n')
+    end
+  end
+end
+
+arg = arg or {}
+
+local argument = arg[1] or 'help'
+
+if argument ~= 'help' then
+  pkg.init()
+end
+
+if type(pkg[argument]) == "function" then
+  pkg[argument](table.unpack(table.take(arg, 2)))
+end
 
 ---@TODO: pkg.config ++update
 return {
