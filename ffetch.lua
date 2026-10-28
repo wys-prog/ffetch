@@ -482,13 +482,14 @@ end
 pkg.init = function ()
   if not sys.hasdir(sys.home()) then
     io.write('It seems like this is your first time launching ffetch.\n')
-    io.write('Creating home directory'):flush()
+    io.write('Creating configuration files\n'):flush()
     sys.mkdir(sys.home())
-    local config = io.open(sys.home() .. '/config.lua', "w")
+    local config = io.open(files.config, "w")
     if config then
       config:write("-- auto-generated configuration file. You may modify its content manually, or through the CLI.\nreturn {\n\tservers = {}\n}")
       config:close()
     end
+    config = io.open(files.packages, 'w')
   end
 
   check('git', true)
@@ -501,11 +502,24 @@ pkg.init = function ()
   check(os.getenv('EDITOR') or 'micro')
 end
 
----@todo: fetch on SPECIFIC repos?
-pkg.fetch = function ()
-  local config, errmsg = io.open(files.packages, 'r+')
-  assert(config, 'cannot open packages file! ' .. (errmsg or  ''))
-  for line in config:lines() do
+---@param any any[]?
+---@param callback fun(line: string)
+pkg.foreach = function (any, callback)
+  if type(any) == "table" and #any > 0 then
+    for _, value in ipairs(any) do
+      callback(sys.home() .. '/installed/' .. tostring(value))
+    end
+  else
+    local config, errmsg = io.open(files.packages, 'r+')
+    assert(config, 'cannot open packages file! ' .. (errmsg or  ''))
+    for line in config:lines() do
+      callback(line)
+    end
+  end
+end
+
+pkg.fetch = function (...)
+  pkg.foreach({...}, function (line)
     io.write('fetching ', line, ': '):flush()
     local ok = popen('git', '-C', line, 'fetch'):close()
     if not ok then
@@ -513,7 +527,20 @@ pkg.fetch = function ()
     else
       io.write(ANSI.green, 'ok', ANSI.reset, '\n')
     end
-  end
+  end)
+end
+
+pkg.update = function (...)
+  pkg.fetch(...)
+  pkg.foreach({...}, function (line)
+    io.write('updating ', line, ': '):flush()
+    local ok = popen('git', '-C', line, 'pull'):close()
+    if not ok then
+      io.write(ANSI.red, 'failed\n', ANSI.reset):flush()
+    else
+      io.write(ANSI.green, 'ok', ANSI.reset, '\n')
+    end
+  end)
 end
 
 pkg.help = function ()
