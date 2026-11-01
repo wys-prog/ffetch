@@ -40,6 +40,15 @@ table.take = function (self, from, till)
   return arr
 end
 
+---@param mod file*?
+---@return true?
+io.wait = function (mod)
+  if mod then
+    local _ = mod:read("a")
+    return mod:close()
+  end
+end
+
 sys.iswindows = package.config:sub(1, 1) == "\\"
 sys.isunix = not sys.iswindows
 
@@ -521,7 +530,7 @@ end
 pkg.fetch = function (...)
   pkg.foreach({...}, function (line)
     io.write('fetching ', line, ': '):flush()
-    local ok = popen('git', '-C', line, 'fetch'):close()
+    local ok = io.wait(popen('git', '-C', line, 'fetch'))
     if not ok then
       io.write(ANSI.red, 'failed\n', ANSI.reset):flush()
     else
@@ -534,9 +543,9 @@ pkg.update = function (...)
   pkg.fetch(...)
   pkg.foreach({...}, function (line)
     io.write('updating ', line, ': '):flush()
-    local ok = popen('git', '-C', line, 'pull'):close()
+    local ok = io.wait(popen('git', '-C', line, 'pull'))
     if not ok then
-      io.write(ANSI.red, 'failed\n', ANSI.reset):flush()
+      io.write(ANSI.red, 'failed: ', ANSI.reset):flush()
     else
       io.write(ANSI.green, 'ok', ANSI.reset, '\n')
     end
